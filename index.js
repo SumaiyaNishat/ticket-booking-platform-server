@@ -32,6 +32,7 @@ async function run() {
     const db = client.db("ticket_db");
     const ticketsCollection = db.collection("tickets");
     const bookingsCollection = db.collection("bookings");
+    const transactionsCollection = db.collection("transactions");
 
     // ticket api
     app.get("/tickets", async (req, res) => {
@@ -149,30 +150,83 @@ async function run() {
     });
 
     app.patch("/bookings/pay/:id", async (req, res) => {
-      const id = req.params.id;
+      try {
+        const id = req.params.id;
 
-      const { ticketId, bookingQuantity } = req.body;
+        // find booking
+        const booking = await bookingsCollection.findOne({
+          _id: new ObjectId(id),
+        });
 
-      await bookingsCollection.updateOne(
-        { _id: new ObjectId(id) },
-        {
-          $set: {
-            status: "paid",
-            paidAt: new Date(),
+        if (!booking) {
+          return res.status(404).send({
+            success: false,
+            message: "Booking not found",
+          });
+        }
+
+        // update booking status
+        await bookingsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              status: "paid",
+              paidAt: new Date(),
+            },
           },
-        },
-      );
+        );
 
-      await ticketsCollection.updateOne(
-        { _id: new ObjectId(ticketId) },
-        {
-          $inc: {
-            quantity: -bookingQuantity,
+        // reduce ticket quantity
+        await ticketsCollection.updateOne(
+          { _id: new ObjectId(booking.ticketId) },
+          {
+            $inc: {
+              quantity: -booking.bookingQuantity,
+            },
           },
-        },
-      );
+        );
 
-      res.send({ success: true });
+        // save transaction history
+        const transaction = {
+          transactionId: "TXN-" + Date.now(),
+
+          bookingId: booking._id.toString(),
+
+          userEmail: booking.userEmail,
+
+          ticketTitle: booking.ticketTitle,
+
+          amount: booking.unitPrice * booking.bookingQuantity,
+
+          paymentDate: new Date(),
+        };
+
+        await transactionsCollection.insertOne(transaction);
+
+        res.send({
+          success: true,
+          message: "Payment completed and transaction saved",
+        });
+      } catch (error) {
+        console.log("Payment update error:", error);
+
+        res.status(500).send({
+          success: false,
+          message: error.message,
+        });
+      }
+    });
+
+    // user transaction history API
+    app.get("/transactions", async (req, res) => {
+      const email = req.query.email;
+
+      const result = await transactionsCollection
+        .find({ userEmail: email })
+        .sort({ paymentDate: -1 })
+        .toArray();
+
+      res.send(result);
     });
 
     // payment related apis
@@ -205,7 +259,7 @@ async function run() {
           bookingQuantity: paymentInfo.bookingQuantity,
         },
         success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?bookingId=${paymentInfo.bookingId}`,
-        cancel_url: `${process.env.SITE_DOMAIN}/dashboard/myBookedTickets`,
+        cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancelled`,
       });
 
       console.log(session);
