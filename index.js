@@ -4,6 +4,7 @@ const app = express();
 const port = process.env.PORT || 3000;
 require("dotenv").config();
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const stripe = require("stripe")(process.env.STRIPE_SECRET);
 
 // middleware
 app.use(express.json());
@@ -30,6 +31,7 @@ async function run() {
 
     const db = client.db("ticket_db");
     const ticketsCollection = db.collection("tickets");
+    const bookingsCollection = db.collection("bookings");
 
     // ticket api
     app.get("/tickets", async (req, res) => {
@@ -50,6 +52,7 @@ async function run() {
       const ticket = req.body;
 
       ticket.createdAt = new Date();
+      ticket.status = "pending";
       const result = await ticketsCollection.insertOne(ticket);
       res.send(result);
     });
@@ -70,6 +73,67 @@ async function run() {
       });
 
       res.send(result);
+    });
+
+    app.get("/latestTickets", async (req, res) => {
+      const result = await ticketsCollection
+        .find({})
+        .sort({ createdAt: -1 })
+        .limit(8)
+        .toArray();
+
+      res.send(result);
+    });
+
+    app.post("/bookings", async (req, res) => {
+      const booking = req.body;
+
+      booking.status = "pending";
+      booking.createdAt = new Date();
+
+      const result = await bookingsCollection.insertOne(booking);
+
+      res.send(result);
+    });
+
+    // get my booking api
+    app.get("/myBookings", async (req, res) => {
+      const email = req.query.userEmail;
+
+      const result = await bookingsCollection
+        .find({ userEmail: email })
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      res.send(result);
+    });
+
+    // payment related apis
+    app.post("/create-checkout-session", async (req, res) => {
+      const paymentInfo = req.body;
+      const amount = parseInt(paymentInfo.cost) * 100;
+      const session = await stripe.checkout.sessions.create({
+        line_items: [
+          {
+            // Provide the exact Price ID (for example, price_1234) of the product you want to sell
+            price_data: {
+              currency: "USD",
+              unit_amount: amount,
+              product_data: {
+                name: paymentInfo.parcelName,
+              },
+            },
+            quantity: 1,
+          },
+        ],
+        customer_email: paymentInfo.vendorEmail,
+        mode: "payment",
+        success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success`,
+        cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancelled`,
+      });
+
+      (console, log(session));
+      res.send({ url: session.url });
     });
 
     // Send a ping to confirm a successful connection
