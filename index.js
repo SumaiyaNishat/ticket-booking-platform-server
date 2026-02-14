@@ -108,6 +108,33 @@ async function run() {
       res.send(result);
     });
 
+
+
+   app.get("/bookings", async (req, res) => {
+
+  const email = req.query.vendorEmail;
+
+  const result = await bookingsCollection
+    .find({ vendorEmail: email })
+    .toArray();
+
+  res.send(result);
+
+});
+
+
+app.patch("/bookings/accept/:id", async (req, res) => {
+
+  const id = req.params.id;
+
+  const result = await bookingsCollection.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: { status: "accepted" } }
+  );
+
+  res.send(result);
+
+});
     // payment related apis
     app.post("/create-checkout-session", async (req, res) => {
       const paymentInfo = req.body;
