@@ -108,37 +108,80 @@ async function run() {
       res.send(result);
     });
 
+    app.get("/bookings", async (req, res) => {
+      const email = req.query.vendorEmail;
 
+      const result = await bookingsCollection
+        .find({ vendorEmail: email })
+        .toArray();
 
-   app.get("/bookings", async (req, res) => {
+      res.send(result);
+    });
 
-  const email = req.query.vendorEmail;
+    app.patch("/bookings/accept/:id", async (req, res) => {
+      const id = req.params.id;
 
-  const result = await bookingsCollection
-    .find({ vendorEmail: email })
-    .toArray();
+      const result = await bookingsCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { status: "accepted" } },
+      );
 
-  res.send(result);
+      res.send(result);
+    });
 
-});
+    app.patch("/bookings/reject/:id", async (req, res) => {
+      const id = req.params.id;
 
+      const result = await bookingsCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { status: "rejected" } },
+      );
 
-app.patch("/bookings/accept/:id", async (req, res) => {
+      res.send(result);
+    });
 
-  const id = req.params.id;
+    // payment
+    app.get("/booking/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await bookingsCollection.findOne(query);
+      res.send(result);
+    });
 
-  const result = await bookingsCollection.updateOne(
-    { _id: new ObjectId(id) },
-    { $set: { status: "accepted" } }
-  );
+    app.patch("/bookings/pay/:id", async (req, res) => {
+      const id = req.params.id;
 
-  res.send(result);
+      const { ticketId, bookingQuantity } = req.body;
 
-});
+      await bookingsCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: {
+            status: "paid",
+            paidAt: new Date(),
+          },
+        },
+      );
+
+      await ticketsCollection.updateOne(
+        { _id: new ObjectId(ticketId) },
+        {
+          $inc: {
+            quantity: -bookingQuantity,
+          },
+        },
+      );
+
+      res.send({ success: true });
+    });
+
     // payment related apis
     app.post("/create-checkout-session", async (req, res) => {
       const paymentInfo = req.body;
-      const amount = parseInt(paymentInfo.cost) * 100;
+      const amount =
+        parseInt(paymentInfo.unitPrice) *
+        parseInt(paymentInfo.bookingQuantity) *
+        100;
       const session = await stripe.checkout.sessions.create({
         line_items: [
           {
@@ -147,19 +190,25 @@ app.patch("/bookings/accept/:id", async (req, res) => {
               currency: "USD",
               unit_amount: amount,
               product_data: {
-                name: paymentInfo.parcelName,
+                name: paymentInfo.ticketTitle,
               },
             },
             quantity: 1,
           },
         ],
-        customer_email: paymentInfo.vendorEmail,
+        customer_email: paymentInfo.userEmail,
         mode: "payment",
-        success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success`,
-        cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancelled`,
+        metadata: {
+          bookingId: paymentInfo.bookingId,
+
+          ticketId: paymentInfo.ticketId,
+          bookingQuantity: paymentInfo.bookingQuantity,
+        },
+        success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?bookingId=${paymentInfo.bookingId}`,
+        cancel_url: `${process.env.SITE_DOMAIN}/dashboard/myBookedTickets`,
       });
 
-      (console, log(session));
+      console.log(session);
       res.send({ url: session.url });
     });
 
