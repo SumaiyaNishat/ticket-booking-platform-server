@@ -57,10 +57,26 @@ async function run() {
     await client.connect();
 
     const db = client.db("ticket_db");
-    const userCollection = db.collection("users");
+    const usersCollection = db.collection("users");
     const ticketsCollection = db.collection("tickets");
     const bookingsCollection = db.collection("bookings");
     const transactionsCollection = db.collection("transactions");
+
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decoded.email;
+
+      const user = await usersCollection.findOne({ email });
+
+      if (!user || user.role !== "admin") {
+        return res.status(403).send({
+          message: "Forbidden access",
+        });
+      }
+
+      next();
+    };
+
+    module.exports = verifyAdmin;
 
     // users related apis
     app.post("/users", async (req, res) => {
@@ -69,20 +85,20 @@ async function run() {
       user.createdAt = new Date();
 
       const email = user.email;
-      const userExists = await userCollection.findOne({ email });
+      const userExists = await usersCollection.findOne({ email });
 
       if (userExists) {
         return res.send({ message: "user exists" });
       }
 
-      const result = await userCollection.insertOne(user);
+      const result = await usersCollection.insertOne(user);
       res.send(result);
     });
 
     app.get("users/:email/role", async (req, res) => {
       const email = req.params.email;
       const query = { email };
-      const user = await userCollection.findOne(query);
+      const user = await usersCollection.findOne(query);
       res.send({ role: user?.role || "user" });
     });
 
@@ -194,9 +210,8 @@ async function run() {
 
     app.get("/tickets", async (req, res) => {
       const result = await ticketsCollection
-        .find({
-          status: "approved",
-        })
+        .find({ status: "approved" })
+        .sort({ createdAt: -1 })
         .toArray();
 
       res.send(result);
@@ -226,6 +241,82 @@ async function run() {
       );
 
       res.send(result);
+    });
+
+    // Get all users
+    app.get("/users", async (req, res) => {
+      const result = await usersCollection.find().toArray();
+
+      res.send(result);
+    });
+
+    app.patch(
+      "/users/:id/role",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const roleInfo = req.body;
+        const query = { _id: new ObjectId(id) };
+        const updatedDoc = {
+          $set: {
+            role: roleInfo.role,
+          },
+        };
+        const result = await userCollection.updateOne(query, updatedDoc);
+        res.send(result);
+      },
+    );
+
+    // Make Admin
+    app.patch("/users/admin/:id", async (req, res) => {
+      const id = req.params.id;
+
+      const result = await usersCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: { role: "admin" },
+        },
+      );
+
+      res.send(result);
+    });
+
+    // Make Vendor
+    app.patch("/users/vendor/:id", async (req, res) => {
+      const id = req.params.id;
+
+      const result = await usersCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: { role: "vendor" },
+        },
+      );
+
+      res.send(result);
+    });
+
+    // Mark vendor as Fraud
+    app.patch("/users/fraud/:id", async (req, res) => {
+      const id = req.params.id;
+
+      // mark fraud
+      await usersCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: { isFraud: true },
+        },
+      );
+
+      // hide vendor tickets
+      await ticketsCollection.updateMany(
+        { vendorId: id },
+        {
+          $set: { status: "rejected" },
+        },
+      );
+
+      res.send({ success: true });
     });
 
     // payment
