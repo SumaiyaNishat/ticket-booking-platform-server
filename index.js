@@ -126,6 +126,54 @@ async function run() {
       }
     });
 
+    // Get all users
+    app.get("/users", async (req, res) => {
+      const result = await usersCollection.find().toArray();
+
+      res.send(result);
+    });
+
+    app.patch(
+      "/users/:id/role",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const roleInfo = req.body;
+        const query = { _id: new ObjectId(id) };
+        const updatedDoc = {
+          $set: {
+            role: roleInfo.role,
+          },
+        };
+        const result = await usersCollection.updateOne(query, updatedDoc);
+        res.send(result);
+      },
+    );
+
+    // Mark vendor as Fraud
+    app.patch("/users/fraud/:id", async (req, res) => {
+      const id = req.params.id;
+
+      // mark fraud
+      await usersCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: { isFraud: true },
+        },
+      );
+
+      // hide vendor tickets
+      await ticketsCollection.updateMany(
+        { vendorId: id },
+        {
+          $set: { status: "rejected" },
+        },
+      );
+
+      res.send({ success: true });
+    });
+
     // ticket api
     app.get("/tickets", async (req, res) => {
       const query = {};
@@ -141,11 +189,28 @@ async function run() {
       const result = await cursor.toArray();
       res.send(result);
     });
+
+    // admin advertise tickets
+    app.get(
+      "/admin/approvedTickets",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const result = await ticketsCollection
+          .find({ status: "approved" })
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.send(result);
+      },
+    );
+
     app.post("/tickets", async (req, res) => {
       const ticket = req.body;
 
       ticket.createdAt = new Date();
       ticket.status = "pending";
+      ticket.isAdvertised = false;
       const result = await ticketsCollection.insertOne(ticket);
       res.send(result);
     });
@@ -173,6 +238,18 @@ async function run() {
         .find({})
         .sort({ createdAt: -1 })
         .limit(8)
+        .toArray();
+
+      res.send(result);
+    });
+
+    app.get("/advertisedTickets", async (req, res) => {
+      const result = await ticketsCollection
+        .find({
+          isAdvertised: true,
+          status: "approved",
+        })
+        .limit(6)
         .toArray();
 
       res.send(result);
@@ -209,6 +286,51 @@ async function run() {
 
       res.send(result);
     });
+
+    app.patch(
+      "/tickets/advertise/:id",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+
+        const ticket = await ticketsCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!ticket) {
+          return res.send({ success: false });
+        }
+
+        // count advertised tickets
+        const advertisedCount = await ticketsCollection.countDocuments({
+          isAdvertised: true,
+        });
+
+        // if trying to advertise and already 6 exists
+        if (!ticket.isAdvertised && advertisedCount >= 6) {
+          return res.send({
+            success: false,
+            message: "Maximum 6 advertised tickets allowed",
+          });
+        }
+
+        // toggle advertise
+        const result = await ticketsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              isAdvertised: !ticket.isAdvertised,
+            },
+          },
+        );
+
+        res.send({
+          success: true,
+          result,
+        });
+      },
+    );
 
     app.patch("/bookings/accept/:id", async (req, res) => {
       const id = req.params.id;
@@ -265,54 +387,6 @@ async function run() {
       );
 
       res.send(result);
-    });
-
-    // Get all users
-    app.get("/users", async (req, res) => {
-      const result = await usersCollection.find().toArray();
-
-      res.send(result);
-    });
-
-    app.patch(
-      "/users/:id/role",
-      verifyFBToken,
-      verifyAdmin,
-      async (req, res) => {
-        const id = req.params.id;
-        const roleInfo = req.body;
-        const query = { _id: new ObjectId(id) };
-        const updatedDoc = {
-          $set: {
-            role: roleInfo.role,
-          },
-        };
-        const result = await usersCollection.updateOne(query, updatedDoc);
-        res.send(result);
-      },
-    );
-
-    // Mark vendor as Fraud
-    app.patch("/users/fraud/:id", async (req, res) => {
-      const id = req.params.id;
-
-      // mark fraud
-      await usersCollection.updateOne(
-        { _id: new ObjectId(id) },
-        {
-          $set: { isFraud: true },
-        },
-      );
-
-      // hide vendor tickets
-      await ticketsCollection.updateMany(
-        { vendorId: id },
-        {
-          $set: { status: "rejected" },
-        },
-      );
-
-      res.send({ success: true });
     });
 
     // payment
