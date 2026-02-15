@@ -6,9 +6,38 @@ require("dotenv").config();
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const stripe = require("stripe")(process.env.STRIPE_SECRET);
 
+const admin = require("firebase-admin");
+
+const serviceAccount = require("./ticket-booking-platform-firebase-adminsdk.json");
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
+
 // middleware
 app.use(express.json());
 app.use(cors());
+
+const verifyFBToken = async(req, res, next) =>{
+  // console.log('headers in the middleware', req.headers.authorization)
+  const token = req.headers.authorization;
+
+  if(!token){
+    return res.status(401).send({ message: 'unauthorized access'})
+  }
+
+  try{
+    const idToken = token.split(' ')[1];
+    const decoded = await admin.auth().verifyIdToken(idToken);
+    console.log('decoded in the token', decoded);
+    req.decoded_email = decoded.email;
+     next();
+  }
+  catch (err) {
+    return res.status(401).send({ message: 'unauthorized access' })
+  }
+ 
+}
 
 app.get("/", (req, res) => {
   res.send("ticket booking platform!");
@@ -30,9 +59,20 @@ async function run() {
     await client.connect();
 
     const db = client.db("ticket_db");
+    const userCollection = db.collection('users');
     const ticketsCollection = db.collection("tickets");
     const bookingsCollection = db.collection("bookings");
     const transactionsCollection = db.collection("transactions");
+
+    // users related apis
+    app.post('/users', async(req, res) =>{
+      const user = req.body;
+      user.role = 'user';
+      user.createdAt = new Date();
+
+      const result = await userCollection.insertOne(user);
+      res.send(result);
+    }) 
 
     // ticket api
     app.get("/tickets", async (req, res) => {
@@ -218,7 +258,7 @@ async function run() {
     });
 
     // user transaction history API
-    app.get("/transactions", async (req, res) => {
+    app.get("/transactions", verifyFBToken, async (req, res) => {
       const email = req.query.email;
 
       const result = await transactionsCollection
