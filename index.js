@@ -11,33 +11,31 @@ const admin = require("firebase-admin");
 const serviceAccount = require("./ticket-booking-platform-firebase-adminsdk.json");
 
 admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
+  credential: admin.credential.cert(serviceAccount),
 });
 
 // middleware
 app.use(express.json());
 app.use(cors());
 
-const verifyFBToken = async(req, res, next) =>{
+const verifyFBToken = async (req, res, next) => {
   // console.log('headers in the middleware', req.headers.authorization)
   const token = req.headers.authorization;
 
-  if(!token){
-    return res.status(401).send({ message: 'unauthorized access'})
+  if (!token) {
+    return res.status(401).send({ message: "unauthorized access" });
   }
 
-  try{
-    const idToken = token.split(' ')[1];
+  try {
+    const idToken = token.split(" ")[1];
     const decoded = await admin.auth().verifyIdToken(idToken);
-    console.log('decoded in the token', decoded);
+    console.log("decoded in the token", decoded);
     req.decoded_email = decoded.email;
-     next();
+    next();
+  } catch (err) {
+    return res.status(401).send({ message: "unauthorized access" });
   }
-  catch (err) {
-    return res.status(401).send({ message: 'unauthorized access' })
-  }
- 
-}
+};
 
 app.get("/", (req, res) => {
   res.send("ticket booking platform!");
@@ -59,20 +57,34 @@ async function run() {
     await client.connect();
 
     const db = client.db("ticket_db");
-    const userCollection = db.collection('users');
+    const userCollection = db.collection("users");
     const ticketsCollection = db.collection("tickets");
     const bookingsCollection = db.collection("bookings");
     const transactionsCollection = db.collection("transactions");
 
     // users related apis
-    app.post('/users', async(req, res) =>{
+    app.post("/users", async (req, res) => {
       const user = req.body;
-      user.role = 'user';
+      user.role = "user";
       user.createdAt = new Date();
+
+      const email = user.email;
+      const userExists = await userCollection.findOne({ email });
+
+      if (userExists) {
+        return res.send({ message: "user exists" });
+      }
 
       const result = await userCollection.insertOne(user);
       res.send(result);
-    }) 
+    });
+
+    app.get("users/:email/role", async (req, res) => {
+      const email = req.params.email;
+      const query = { email };
+      const user = await userCollection.findOne(query);
+      res.send({ role: user?.role || "user" });
+    });
 
     // ticket api
     app.get("/tickets", async (req, res) => {
@@ -131,7 +143,6 @@ async function run() {
 
       booking.status = "pending";
       booking.createdAt = new Date();
-
       const result = await bookingsCollection.insertOne(booking);
 
       res.send(result);
@@ -176,6 +187,42 @@ async function run() {
       const result = await bookingsCollection.updateOne(
         { _id: new ObjectId(id) },
         { $set: { status: "rejected" } },
+      );
+
+      res.send(result);
+    });
+
+    app.get("/tickets", async (req, res) => {
+      const result = await ticketsCollection
+        .find({
+          status: "approved",
+        })
+        .toArray();
+
+      res.send(result);
+    });
+
+    app.patch("/tickets/approve/:id", async (req, res) => {
+      const id = req.params.id;
+
+      const result = await ticketsCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: { status: "approved" },
+        },
+      );
+
+      res.send(result);
+    });
+
+    app.patch("/tickets/reject/:id", async (req, res) => {
+      const id = req.params.id;
+
+      const result = await ticketsCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: { status: "rejected" },
+        },
       );
 
       res.send(result);
