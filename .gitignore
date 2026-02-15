@@ -1,3 +1,4 @@
 node_modules
 .env
+.vercel
 ticket-booking-platform-firebase-adminsdk.json
