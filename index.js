@@ -63,7 +63,7 @@ async function run() {
     const transactionsCollection = db.collection("transactions");
 
     const verifyAdmin = async (req, res, next) => {
-      const email = req.decoded.email;
+      const email = req.decoded_email;
 
       const user = await usersCollection.findOne({ email });
 
@@ -95,11 +95,35 @@ async function run() {
       res.send(result);
     });
 
-    app.get("users/:email/role", async (req, res) => {
-      const email = req.params.email;
-      const query = { email };
-      const user = await usersCollection.findOne(query);
-      res.send({ role: user?.role || "user" });
+    app.get("/users/role/:email", verifyFBToken, async (req, res) => {
+      try {
+        const email = req.params.email;
+
+        const user = await usersCollection.findOne({ email });
+
+        if (!user) {
+          return res.send({ role: "user" });
+        }
+
+        res.send({ role: user.role });
+      } catch (error) {
+        console.log(error);
+
+        res.status(500).send({ role: "user" });
+      }
+    });
+
+    // get single user profile
+    app.get("/users/profile/:email", verifyFBToken, async (req, res) => {
+      try {
+        const email = req.params.email;
+
+        const user = await usersCollection.findOne({ email });
+
+        res.send(user);
+      } catch (error) {
+        res.status(500).send({ message: "Server error" });
+      }
     });
 
     // ticket api
@@ -263,38 +287,10 @@ async function run() {
             role: roleInfo.role,
           },
         };
-        const result = await userCollection.updateOne(query, updatedDoc);
+        const result = await usersCollection.updateOne(query, updatedDoc);
         res.send(result);
       },
     );
-
-    // Make Admin
-    app.patch("/users/admin/:id", async (req, res) => {
-      const id = req.params.id;
-
-      const result = await usersCollection.updateOne(
-        { _id: new ObjectId(id) },
-        {
-          $set: { role: "admin" },
-        },
-      );
-
-      res.send(result);
-    });
-
-    // Make Vendor
-    app.patch("/users/vendor/:id", async (req, res) => {
-      const id = req.params.id;
-
-      const result = await usersCollection.updateOne(
-        { _id: new ObjectId(id) },
-        {
-          $set: { role: "vendor" },
-        },
-      );
-
-      res.send(result);
-    });
 
     // Mark vendor as Fraud
     app.patch("/users/fraud/:id", async (req, res) => {
