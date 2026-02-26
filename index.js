@@ -10,7 +10,9 @@ const admin = require("firebase-admin");
 
 // const serviceAccount = require("./ticket-booking-platform-firebase-adminsdk.json");
 
-const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
+  "utf8",
+);
 const serviceAccount = JSON.parse(decoded);
 
 admin.initializeApp({
@@ -78,8 +80,6 @@ async function run() {
 
       next();
     };
-
-    module.exports = verifyAdmin;
 
     // users related apis
     app.post("/users", async (req, res) => {
@@ -179,18 +179,77 @@ async function run() {
 
     // ticket api
     app.get("/tickets", async (req, res) => {
-      const query = {};
+      const vendorEmail = req.query.vendorEmail;
 
-      const { email } = req.query;
-      if (email) {
-        query.vendorEmail = email;
+      let query = {};
+
+      if (vendorEmail) {
+        query = { vendorEmail: vendorEmail };
+      } else {
+        query = { status: "approved" };
       }
 
-      const options = { sort: { createdAt: -1 } };
+      const result = await ticketsCollection
+        .find(query)
+        .sort({ createdAt: -1 })
+        .toArray();
 
-      const cursor = ticketsCollection.find(query, options);
-      const result = await cursor.toArray();
       res.send(result);
+    });
+
+    // admin
+    app.get("/admin/tickets", async (req, res) => {
+      const result = await ticketsCollection
+        .find()
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      res.send(result);
+    });
+
+    app.get("/vendor/revenue-overview", verifyFBToken, async (req, res) => {
+      try {
+        const email = req.decoded_email;
+
+        if (!email) {
+          return res.status(401).send({
+            message: "Unauthorized access",
+          });
+        }
+
+        const totalTicketsAdded = await ticketsCollection.countDocuments({
+          vendorEmail: email,
+        });
+
+        const bookings = await bookingsCollection
+          .find({
+            vendorEmail: email,
+            status: "paid",
+          })
+          .toArray();
+
+        const totalTicketsSold = bookings.reduce(
+          (sum, booking) => sum + Number(booking.bookingQuantity || 0),
+          0,
+        );
+
+        const totalRevenue = bookings.reduce(
+          (sum, booking) => sum + Number(booking.totalPrice || 0),
+          0,
+        );
+
+        res.send({
+          totalRevenue,
+          totalTicketsSold,
+          totalTicketsAdded,
+        });
+      } catch (error) {
+        console.error("Revenue overview error:", error);
+
+        res.status(500).send({
+          message: "Failed to load revenue overview",
+        });
+      }
     });
 
     // admin advertise tickets
@@ -236,17 +295,8 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/latestTickets", async (req, res) => {
-      const result = await ticketsCollection
-        .find({})
-        .sort({ createdAt: -1 })
-        .limit(8)
-        .toArray();
 
-      res.send(result);
-    });
-
-    app.get("/advertisedTickets", async (req, res) => {
+     app.get("/advertisedTickets", async (req, res) => {
       const result = await ticketsCollection
         .find({
           isAdvertised: true,
@@ -257,6 +307,18 @@ async function run() {
 
       res.send(result);
     });
+
+    app.get("/latestTickets", async (req, res) => {
+      const result = await ticketsCollection
+        .find({})
+        .sort({ createdAt: -1 })
+        .limit(8)
+        .toArray();
+
+      res.send(result);
+    });
+
+   
 
     app.post("/bookings", async (req, res) => {
       const booking = req.body;
@@ -310,7 +372,6 @@ async function run() {
           isAdvertised: true,
         });
 
-        // if trying to advertise and already 6 exists
         if (!ticket.isAdvertised && advertisedCount >= 6) {
           return res.send({
             success: false,
@@ -357,15 +418,6 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/tickets", async (req, res) => {
-      const result = await ticketsCollection
-        .find({ status: "approved" })
-        .sort({ createdAt: -1 })
-        .toArray();
-
-      res.send(result);
-    });
-
     app.patch("/tickets/approve/:id", async (req, res) => {
       const id = req.params.id;
 
@@ -387,6 +439,20 @@ async function run() {
         {
           $set: { status: "rejected" },
         },
+      );
+
+      res.send(result);
+    });
+
+    app.patch("/tickets/:id", verifyFBToken, async (req, res) => {
+      const id = req.params.id;
+
+      const updatedData = req.body;
+
+      const result = await ticketsCollection.updateOne(
+        { _id: new ObjectId(id) },
+
+        { $set: updatedData },
       );
 
       res.send(result);
@@ -514,9 +580,9 @@ async function run() {
 
     // Send a ping to confirm a successful connection
     // await client.db("admin").command({ ping: 1 });
-    // console.log(
-    //   "Pinged your deployment. You successfully connected to MongoDB!",
-    // );
+    console.log(
+      "Pinged your deployment. You successfully connected to MongoDB!",
+    );
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
@@ -527,3 +593,5 @@ run().catch(console.dir);
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
 });
+
+module.exports = app;
